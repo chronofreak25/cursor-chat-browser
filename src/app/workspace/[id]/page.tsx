@@ -10,8 +10,8 @@ import { Loading } from "@/components/ui/loading"
 import { DownloadMenu } from "@/components/download-menu"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from 'remark-gfm'
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/cjs/styles/prism'
+import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism'
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { ChatTab, Workspace, ComposerChat } from "@/types/workspace"
 import { Badge } from "@/components/ui/badge"
 import { CopyButton } from "@/components/copy-button"
@@ -103,6 +103,15 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
     ? state.composers.find(composer => composer.composerId === state.selectedId)
     : null
 
+  let displayTitle = 'Untitled';
+  if (state.selectedType === 'chat' && selectedChat) {
+    // Ensure fallback is consistent with how sidebar/API might create it if original title is empty
+    displayTitle = selectedChat.title || `Chat ${selectedChat.id.slice(0,8)}`;
+  } else if (state.selectedType === 'composer' && selectedComposer) {
+    // For composers, prioritize name (from sidebar) then text, then a generic fallback
+    displayTitle = selectedComposer.name || selectedComposer.text || `Composer ${selectedComposer.composerId.slice(0,8)}`;
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -120,12 +129,12 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
               id: selectedComposer.composerId,
               title: selectedComposer.text || 'Untitled',
               timestamp: new Date(selectedComposer.lastUpdatedAt || selectedComposer.createdAt).toISOString(),
-              bubbles: selectedComposer.conversation.map(msg => ({
+              bubbles: selectedComposer.conversation?.map(msg => ({
                 type: msg.type === 1 ? 'user' : 'ai',
                 text: msg.text,
                 modelType: msg.type === 2 ? 'Composer Assistant' : undefined,
                 selections: msg.context?.selections || []
-              }))
+              })) || []
             }} />}
           </div>
         </div>
@@ -196,7 +205,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
             <Card className="p-6">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-bold">
-                  {selectedChat?.title || selectedComposer?.text || 'Untitled'}
+                  {displayTitle}
                 </h2>
                 <Badge variant={state.selectedType === 'chat' ? 'default' : 'secondary'}>
                   {state.selectedType === 'chat' ? 'Ask Log' : 'Agent Log'}
@@ -248,7 +257,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
                                 <SyntaxHighlighter
                                   PreTag="div"
                                   language={language || 'text'}
-                                  style={vscDarkPlus as any}
+                                  style={vscDarkPlus}
                                 >
                                   {String(children).replace(/\n$/, '')}
                                 </SyntaxHighlighter>
@@ -271,7 +280,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
                     ) : null}
                   </div>
                 ))}
-                {selectedComposer?.conversation && selectedComposer.conversation!.map((message) => (
+                {selectedComposer?.conversation && selectedComposer.conversation.map((message) => (
                   <div
                     key={message.bubbleId}
                     className={`p-4 rounded-lg border ${
@@ -299,7 +308,7 @@ export default function WorkspacePage({ params }: { params: { id: string } }) {
                                 <SyntaxHighlighter
                                   PreTag="div"
                                   language={language || 'text'}
-                                  style={vscDarkPlus as any}
+                                  style={vscDarkPlus}
                                 >
                                   {String(children).replace(/\n$/, '')}
                                 </SyntaxHighlighter>

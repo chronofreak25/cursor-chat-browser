@@ -78,6 +78,8 @@ export interface ComposerMessage {
 export interface ComposerChat {
   composerId: string;
   conversation?: ComposerMessage[];
+  fullConversationHeadersOnly?: Array<{ bubbleId: string; type: 1 | 2; serverBubbleId?: string }>;
+  conversationMap?: Record<string, ComposerMessage>;
   richText: string;
   text: string;
   status: string;
