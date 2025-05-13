@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import path from 'path'
 import sqlite3 from 'sqlite3'
 import { open } from 'sqlite'
-import { ChatBubble, ChatTab, ComposerData } from "@/types/workspace"
+import { ChatBubble, ChatTab, ComposerData, ComposerChat, ComposerContext, ComposerMessage } from "@/types/workspace"
 
 interface RawTab {
   tabId: string;
@@ -83,8 +83,41 @@ export async function GET(
       await globalDb.close()
 
       if (composersBodyResult) {
-        composers.allComposers = composersBodyResult.map((it) => JSON.parse(it.value))
-        response.composers = composers
+        // This will now be an array of Promises if we need to fetch message details
+        const composerPromises = composersBodyResult.map(async (composerRecord) => {
+          const composer: ComposerChat = JSON.parse(composerRecord.value);
+
+          // Check if full conversation is missing but headers are present
+          if ((!composer.conversation || composer.conversation.length === 0) &&
+              composer.fullConversationHeadersOnly &&
+              composer.fullConversationHeadersOnly.length > 0) {
+
+            const messageKeys = composer.fullConversationHeadersOnly.map(header => header.bubbleId);
+            
+            if (messageKeys.length > 0) {
+              // We'll add the database query for these keys in the next step
+              // For now, let's log that we would fetch them
+              console.log(`Workspace ${params.id}, Composer ${composer.composerId}: Would fetch details for ${messageKeys.length} messages using keys: ${messageKeys.join(', ')}`);
+              
+              // Placeholder: In a real scenario, you'd fetch and populate composer.conversation here
+              // For now, let's assign the headers to the conversation to see a structural change if nothing else
+              // This is temporary and will be replaced by actual messages
+              composer.conversation = composer.fullConversationHeadersOnly.map((header: { bubbleId: string; type: 1 | 2; serverBubbleId?: string }) => ({
+                bubbleId: header.bubbleId,
+                type: header.type,
+                text: `[Details for ${header.bubbleId} not fetched yet]`, // Placeholder text
+                richText: '', // Placeholder
+                context: {} as ComposerContext, // Placeholder, assuming ComposerContext structure
+                timestamp: Date.now() // Placeholder
+              }));
+            }
+          }
+          return composer;
+        });
+
+        // Resolve all promises (important if async operations are involved)
+        composers.allComposers = await Promise.all(composerPromises);
+        response.composers = composers;
       }
     }
 
