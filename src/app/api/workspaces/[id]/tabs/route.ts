@@ -75,15 +75,13 @@ export async function GET(
         driver: sqlite3.Database
       })
 
-      const composersBodyResult = await globalDb.all(`
-        SELECT value FROM cursorDiskKV
-        WHERE [key] in (${placeholders})
-      `, keys)
-
-      await globalDb.close()
+      const composersBodyResult = await globalDb.all(
+        `SELECT value FROM cursorDiskKV
+        WHERE [key] in (${placeholders})`,
+        keys
+      )
 
       if (composersBodyResult) {
-        // This will now be an array of Promises if we need to fetch message details
         const composerPromises = composersBodyResult.map(async (composerRecord) => {
           const composer: ComposerChat = JSON.parse(composerRecord.value);
 
@@ -92,24 +90,72 @@ export async function GET(
               composer.fullConversationHeadersOnly &&
               composer.fullConversationHeadersOnly.length > 0) {
 
-            const messageKeys = composer.fullConversationHeadersOnly.map(header => header.bubbleId);
+            const messageKeys = composer.fullConversationHeadersOnly.map(header => `bubbleId:${composer.composerId}:${header.bubbleId}`);
             
             if (messageKeys.length > 0) {
-              // We'll add the database query for these keys in the next step
-              // For now, let's log that we would fetch them
-              console.log(`Workspace ${params.id}, Composer ${composer.composerId}: Would fetch details for ${messageKeys.length} messages using keys: ${messageKeys.join(', ')}`);
+              console.log(`Workspace ${params.id}, Composer ${composer.composerId}: Attempting to fetch details for ${messageKeys.length} messages using correct keys (e.g., ${messageKeys[0]})`);
               
-              // Placeholder: In a real scenario, you'd fetch and populate composer.conversation here
-              // For now, let's assign the headers to the conversation to see a structural change if nothing else
-              // This is temporary and will be replaced by actual messages
-              composer.conversation = composer.fullConversationHeadersOnly.map((header: { bubbleId: string; type: 1 | 2; serverBubbleId?: string }) => ({
-                bubbleId: header.bubbleId,
-                type: header.type,
-                text: `[Details for ${header.bubbleId} not fetched yet]`, // Placeholder text
-                richText: '', // Placeholder
-                context: {} as ComposerContext, // Placeholder, assuming ComposerContext structure
-                timestamp: Date.now() // Placeholder
-              }));
+              try {
+                const messagePlaceholders = messageKeys.map(() => '?').join(',');
+                const messageDetailsResults = await globalDb.all(
+                  `SELECT value FROM cursorDiskKV WHERE key IN (${messagePlaceholders})`,
+                  messageKeys
+                );
+
+                if (messageDetailsResults && messageDetailsResults.length > 0) {
+                  const messagesMap = new Map<string, ComposerMessage>();
+                  messageDetailsResults.forEach(row => {
+                    const message: ComposerMessage = JSON.parse(row.value);
+                    messagesMap.set(message.bubbleId, message);
+                  });
+
+                  // Reconstruct conversation in the correct order using headers
+                  composer.conversation = composer.fullConversationHeadersOnly
+                    .map((header: { bubbleId: string; type: 1 | 2; serverBubbleId?: string }) => {
+                      const fullMessage = messagesMap.get(header.bubbleId);
+                      if (fullMessage) {
+                        // Ensure the type from the header (which is 1 or 2) is consistent
+                        // or use it if the fullMessage doesn't have type (though it should)
+                        return {
+                          ...fullMessage,
+                          type: header.type, // Prioritize type from header if needed, or ensure consistency
+                        };
+                      }
+                      // Fallback if a specific message detail wasn't found (should ideally not happen if keys are correct)
+                      return {
+                        bubbleId: header.bubbleId,
+                        type: header.type,
+                        text: `[Error: Details for ${header.bubbleId} not found in DB]`,
+                        richText: '',
+                        context: {} as ComposerContext,
+                        timestamp: Date.now()
+                      };
+                    });
+                  console.log(`Workspace ${params.id}, Composer ${composer.composerId}: Successfully fetched and mapped ${messagesMap.size} message details.`);
+                } else {
+                  console.log(`Workspace ${params.id}, Composer ${composer.composerId}: No message details found in DB for correct keys (e.g., ${messageKeys[0]})`);
+                  // Fallback: Keep placeholder to indicate fetching was attempted but failed
+                  composer.conversation = composer.fullConversationHeadersOnly.map((header: { bubbleId: string; type: 1 | 2; serverBubbleId?: string }) => ({
+                      bubbleId: header.bubbleId,
+                      type: header.type,
+                      text: `[Details for ${header.bubbleId} not found in DB (no results)]`,
+                      richText: '',
+                      context: {} as ComposerContext,
+                      timestamp: Date.now()
+                  }));
+                }
+              } catch (e) {
+                console.error(`Workspace ${params.id}, Composer ${composer.composerId}: Error fetching message details:`, e);
+                // Fallback: Keep placeholder to indicate an error occurred
+                composer.conversation = composer.fullConversationHeadersOnly.map((header: { bubbleId: string; type: 1 | 2; serverBubbleId?: string }) => ({
+                    bubbleId: header.bubbleId,
+                    type: header.type,
+                    text: `[Error fetching details for ${header.bubbleId}]`,
+                    richText: '',
+                    context: {} as ComposerContext,
+                    timestamp: Date.now()
+                }));
+              }
             }
           }
           return composer;
@@ -119,6 +165,8 @@ export async function GET(
         composers.allComposers = await Promise.all(composerPromises);
         response.composers = composers;
       }
+
+      await globalDb.close(); // Close globalDb AFTER all processing is done
     }
 
     return NextResponse.json(response)
